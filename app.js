@@ -1,18 +1,41 @@
 //jshint esversion:6
-
-const express = require("express");
-const bodyParser = require("body-parser");
+//jshint esversion:6
+// require('dotenv').config();
+const express = require("express")
+const bodyParser = require("body-parser")
 const mongoose = require("mongoose")
+const ejs = require("ejs")
+const encrypt = require("mongoose-encryption")
+// const md5 = require("md5")
+const bcrypt = require("bcrypt")
+const saltRounds = 1;
 const _ = require("lodash")
+const session = require('express-session');
 
-const ejs = require("ejs");
+
+let globalUsername;
+
+
+
 // const { max } = require("lodash");
 
 mongoose.set('strictQuery',false)
+mongoose.connect("mongodb+srv://meet:o4VT7M2kaSISQ1Hh@cluster0.lplz9.mongodb.net/test")
 
-mongoose.connect("mongodb://127.0.0.1:27017/blogDB")
+
+const userSchema = new mongoose.Schema({
+  username:String,
+  email:String,
+  password:String
+})
+
+// userSchema.plugin(encrypt,{secret:process.env.SECRET,encryptedFields:['password']});
+
+const User = new mongoose.model("User",userSchema)
+
 
 const postSchema = {
+  username:String,
   title:String,
   content:String
 }
@@ -34,62 +57,216 @@ app.use(express.static("public"));
 
 
 app.get("/",function(req,res){
-  // console.log(posts);
+  res.render("default")
+})
 
-Post.find({},function(err,posts){
-  if(err){
-    console.log(err);
-  }
-  else{
-    res.render("home",{
-      startingContent:homeStartingContent,
-      posts:posts
+app.get("/login",function(req,res){
+  res.render("login")
+})
+app.get("/register",function(req,res){
+  res.render("register")
+})
+
+app.post("/register",function(req,res){
+bcrypt.hash(req.body.password,saltRounds,function(err,hash){
+
+  const newUser = new User({
+      username:req.body.username,
+      email:req.body.email,
+      password:hash
+      // password:md5(req.body.password)
     })
-  }
-})
-  // res.render(__dirname + "/views/home.ejs")
+   
+
+  newUser.save(function(err){
+      if(err){
+          console.log(err);
+      }
+      else{
+        globalUsername = req.body.username;
+        res.redirect("/home")
+        res.render("partials/header",{
+          username:globalUsername
+        })
+      }
+  });
 
 })
+
+})
+// console.log(username);
+
+app.post("/login", function(req, res) {
+  const username = req.body.username;
+  const password = req.body.password;
+
+  User.findOne({ email: username }, function(err, foundUser) {
+    if (err) {
+      console.log(err);
+    } else {
+      if (foundUser) {
+        bcrypt.compare(password, foundUser.password, function(err, result) {
+          if (result === true) {
+            globalUsername = foundUser.username;
+            if (foundUser.email === "chess44@gmail.com") {
+              res.redirect("/admin");
+            } else {
+              res.redirect("/home");
+            }
+          }
+        });
+      }
+    }
+  });
+});
+
+
+
+
+
+
+app.get('/home', function(req, res) {
+  Post.find({}, function(err, posts) {
+    if (err) {
+      console.log(err);
+      res.status(500).send('Internal server error');
+      return;
+    }
+
+    // Assuming you have defined the globalUsername variable somewhere in your code
+    // const globalUsername = 'Vishwarajsinh Jadeja';
+
+    // Render the home view and pass the necessary data to it
+    try {
+      res.render('home', {
+        startingContent: homeStartingContent,
+        username: globalUsername,
+        posts: posts
+      }, function(err, html) {
+        if (err) {
+          console.log(err);
+        }
+
+        // Render the header partial and pass the username variable to it
+        res.render('partials/header', {
+          username: globalUsername
+        }, function(err, headerHtml) {
+          if (err) {
+            console.log(err);
+          }
+
+          // Replace the <header> tag in the home view with the header partial HTML
+          html = html.replace('<header></header>', headerHtml);
+
+          // Send the final HTML response to the client
+          res.send(html);
+        });
+      });
+    } catch (err) {
+      console.log(err);
+      res.status(500).send('Internal server error');
+    }
+  });
+});
 
 app.get("/about",function(req,res){
   res.render("about",{
+    username: globalUsername,
     aboutContent:aboutContent
   })
 })
 
 app.get("/contact",function(req,res){
   res.render("contact",{
+    username: globalUsername,
     contactContent:contactContent
   })
 })
 
-app.get("/compose",function(req,res){
-  res.render("compose")
-})
-
-app.get("/posts/:postId",function(req,res){
-
-  // const requestedTitle = _.lowerCase(req.params.postName)
-
-  const requestedPostId = req.params.postId;
-// for(var i=0;i<posts.length;i++){
-  // var str = _.lowerCase(requestedTitle);
-  // console.log(requestedTitle);
-  Post.findOne({_id: requestedPostId}, function(err, post){
-
-  
-    res.render("post", {
-      title: post.title,
- 
-      content: post.content
- 
+app.get("/compose", function(req, res) {
+  if (globalUsername) {
+    res.render("compose", {
+      username: globalUsername
     });
+  } else {
+    res.redirect("/login");
+  }
 });
+
+app.get("/posts/:postId", function(req, res) {
+  const requestedPostId = req.params.postId;
+  Post.findOne({_id: requestedPostId}, function(err, post) {
+    if (err) {
+      console.log(err);
+      res.status(500).send('Internal server error');
+      return;
+    }
+
+    res.render("post", {
+      username: globalUsername, // replace globalUsername with the username variable you want to use
+      title: post.title,
+      content: post.content
+    });
+  });
 });
+
+app.get('*', function(req, res, next) {
+  res.locals.user = req.user || null;
+  res.locals.username = globalUsername || null;
+  next();
+});
+
+
+app.get("/admin",function(req,res){
+  Post.find({}, function(err, posts) {
+    if (err) {
+      console.log(err);
+      res.status(500).send('Internal server error');
+      return;
+    }
+
+    // Assuming you have defined the globalUsername variable somewhere in your code
+    // const globalUsername = 'Vishwarajsinh Jadeja';
+
+    // Render the home view and pass the necessary data to it
+    try {
+      res.render('admin', {
+        startingContent: homeStartingContent,
+        username: globalUsername,
+        posts: posts
+      }, function(err, html) {
+        if (err) {
+          console.log(err);
+        }
+
+        // Render the header partial and pass the username variable to it
+        res.render('partials/header', {
+          username: globalUsername
+        }, function(err, headerHtml) {
+          if (err) {
+            console.log(err);
+          }
+
+          // Replace the <header> tag in the home view with the header partial HTML
+          html = html.replace('<header></header>', headerHtml);
+
+          // Send the final HTML response to the client
+          res.send(html);
+        });
+      });
+    } catch (err) {
+      console.log(err);
+      res.status(500).send('Internal server error');
+    }
+  });
+});
+
+
 app.post("/compose",function(req,res){
   // console.log(req.body.postTitle);
   // console.log(req.body.postBody);
 const post = new Post ({
+  username:globalUsername,
   title : req.body.postTitle,
   content :req.body.postBody
   
@@ -97,12 +274,12 @@ const post = new Post ({
 
 post.save(function(err){
   if(!err){
-    res.render("/")
+    res.render("/admin")
   }
 });
 // console.log(post);
 // posts.push(post)
-res.redirect("/")
+res.redirect("/admin")
 // console.log(post.title);
 })
 
@@ -116,7 +293,7 @@ app.post("/delete",function(req,res){
     }
     else{
       console.log("Sucessfully deleted checked item");
-      res.redirect("/");
+      res.redirect("/admin");
     }
   })
 })
